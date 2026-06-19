@@ -16,34 +16,43 @@ pub fn parse_string(input: KconfigInput) -> IResult<KconfigInput, String> {
     .parse(input)
 }
 
+/// See [`crate::string::take_until_unbalanced`]: the string ends at the first
+/// unescaped `delimiter` that is not nested inside a `$(...)` macro expansion.
 pub fn take_until_unbalanced(
     delimiter: char,
 ) -> impl Fn(KconfigInput) -> IResult<KconfigInput, KconfigInput> {
     move |i: KconfigInput| {
-        let mut index: usize = 0;
-        let mut delimiter_counter = 0;
+        let mut macro_depth: usize = 0;
+        let mut chars = i.fragment().char_indices().peekable();
 
-        let end_of_line = match &i.find('\n') {
-            Some(e) => *e,
-            None => i.len(),
-        };
-
-        while let Some(n) = &i[index..end_of_line].find(delimiter) {
-            delimiter_counter += 1;
-            index += n + 1;
+        while let Some((index, c)) = chars.next() {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '$' if matches!(chars.peek(), Some((_, '('))) => {
+                    macro_depth += 1;
+                    chars.next();
+                }
+                ')' if macro_depth > 0 => {
+                    macro_depth -= 1;
+                }
+                '\n' => {
+                    return Err(nom::Err::Error(Error::from_error_kind(
+                        i,
+                        ErrorKind::TakeUntil,
+                    )))
+                }
+                c if c == delimiter && macro_depth == 0 => {
+                    return Ok(i.take_split(index));
+                }
+                _ => {}
+            }
         }
 
-        // we split just before the last double quote
-        index -= 1;
-        // Last delimiter is the string delimiter
-        delimiter_counter -= 1;
-
-        match delimiter_counter % 2 == 0 {
-            true => Ok(i.take_split(index)),
-            false => Err(nom::Err::Error(Error::from_error_kind(
-                i,
-                ErrorKind::TakeUntil,
-            ))),
-        }
+        Err(nom::Err::Error(Error::from_error_kind(
+            i,
+            ErrorKind::TakeUntil,
+        )))
     }
 }

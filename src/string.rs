@@ -22,43 +22,56 @@ pub fn parse_string(input: KconfigInput) -> IResult<KconfigInput, String> {
     .parse(input)
 }
 
+/// Consumes the content of a quoted string up to (but not including) its closing
+/// `delimiter`, mirroring Kconfig's lexer. The string ends at the first occurrence
+/// of `delimiter` that is:
+///   * not escaped with a backslash, and
+///   * not nested inside a `$(...)` macro expansion (whose own quotes are part of
+///     the macro argument, e.g. `"$(shell, ... "x" "y")"`).
+///
+/// A newline or end of input before the closing delimiter is an error, since a
+/// string delimiter cannot span multiple lines. This correctly leaves a following
+/// expression untouched, e.g. for `'y'||(...)` only `y` is consumed.
 pub fn take_until_unbalanced(
     delimiter: char,
 ) -> impl Fn(KconfigInput) -> IResult<KconfigInput, KconfigInput> {
     move |i: KconfigInput| {
-        let mut index: usize = 0;
-        let mut delimiter_counter = 0;
+        let mut macro_depth: usize = 0;
+        let mut chars = i.fragment().char_indices().peekable();
 
-        let end_of_line = match &i.find('\n') {
-            Some(e) => *e,
-            None => i.len(),
-        };
-
-        while let Some(n) = &i[index..end_of_line].find(delimiter) {
-            delimiter_counter += 1;
-            index += n + 1;
-        }
-
-        // we split just before the last double quote
-        match index.checked_sub(1) {
-            Some(i) => index = i,
-            None => {
-                return Err(nom::Err::Error(Error::from_error_kind(
-                    i,
-                    ErrorKind::TakeUntil,
-                )))
+        while let Some((index, c)) = chars.next() {
+            match c {
+                // An escaped character never terminates the string; skip the next one.
+                '\\' => {
+                    chars.next();
+                }
+                // Enter a `$(...)` macro expansion; quotes inside do not terminate.
+                '$' if matches!(chars.peek(), Some((_, '('))) => {
+                    macro_depth += 1;
+                    chars.next();
+                }
+                ')' if macro_depth > 0 => {
+                    macro_depth -= 1;
+                }
+                // A string delimiter is never allowed to span multiple lines.
+                '\n' => {
+                    return Err(nom::Err::Error(Error::from_error_kind(
+                        i,
+                        ErrorKind::TakeUntil,
+                    )))
+                }
+                c if c == delimiter && macro_depth == 0 => {
+                    return Ok(i.take_split(index));
+                }
+                _ => {}
             }
         }
-        // Last delimiter is the string delimiter
-        delimiter_counter -= 1;
 
-        match delimiter_counter % 2 == 0 {
-            true => Ok(i.take_split(index)),
-            false => Err(nom::Err::Error(Error::from_error_kind(
-                i,
-                ErrorKind::TakeUntil,
-            ))),
-        }
+        // Reached end of input without finding the closing delimiter.
+        Err(nom::Err::Error(Error::from_error_kind(
+            i,
+            ErrorKind::TakeUntil,
+        )))
     }
 }
 

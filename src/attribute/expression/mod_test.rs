@@ -121,20 +121,34 @@ fn test_parse_depends_on_ambigus() {
     )
 }
 
-// 5.0/scripts/gcc-plugins/Kconfig
+// A string ends at the first unescaped closing quote, matching Kconfig's lexer.
 #[test]
 fn test_parse_string() {
     assert_parsing_eq!(
         parse_string,
         r#""hello "world"" if NET"#,
-        Ok((" if NET", r#"hello "world""#.to_string()),)
+        Ok((r#"world"" if NET"#, "hello ".to_string()),)
     );
 
-    assert_parsing_fail!(parse_string, r#""hello "world""#);
+    // Quotes inside a `$(...)` macro expansion do not terminate the string.
+    // 5.0/scripts/gcc-plugins/Kconfig
+    assert_parsing_eq!(
+        parse_string,
+        r#""$(shell,echo "hi" "there")" if NET"#,
+        Ok((" if NET", r#"$(shell,echo "hi" "there")"#.to_string()),)
+    );
 
+    // Backslash-escaped quotes do not terminate the string either.
+    assert_parsing_eq!(
+        parse_string,
+        r#""hello \"world\"" if NET"#,
+        Ok((" if NET", r#"hello \"world\""#.to_string()),)
+    );
+
+    // An unterminated string (closing quote only on the next line) fails.
     assert_parsing_fail!(
         parse_string,
-        r#""hello "world"
+        r#""hello world
 ""#
     )
 }

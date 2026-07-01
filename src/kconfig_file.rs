@@ -142,14 +142,29 @@ impl KconfigFile {
     }
 
     pub fn preprocess_content(&self, content: String) -> String {
+        self.substitute_vars(&content)
+    }
+
+    /// Substitute Make-style `$(VAR)` / `${VAR}` references — and the older
+    /// shell-style bare `$VAR` form used before Linux v4.18 — with the values of
+    /// the known [`vars`](Self::vars). Used both to preprocess file contents and
+    /// to expand variables embedded in `source` paths (e.g. `arch/$(SRCARCH)/Kconfig`
+    /// in v4.18+, or `arch/$SRCARCH/Kconfig` before that).
+    pub fn substitute_vars(&self, content: &str) -> String {
         let variables = self.vars();
         if variables.is_empty() {
-            return content;
+            return content.to_string();
         }
-        let mut file_copy = content.clone();
+        // Process longer variable names first so that the bare `$VAR` form of a
+        // shorter name (e.g. `$SRC`) cannot match inside a longer one (`$SRCARCH`).
+        let mut variables: Vec<(String, String)> = variables.into_iter().collect();
+        variables.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        let mut file_copy = content.to_string();
         for (var_name, var_value) in variables {
             file_copy = file_copy.replace(&format!("$({var_name})"), &var_value);
             file_copy = file_copy.replace(&format!("${{{var_name}}}"), &var_value);
+            file_copy = file_copy.replace(&format!("${var_name}"), &var_value);
         }
 
         file_copy

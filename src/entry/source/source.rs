@@ -30,6 +30,12 @@ pub fn parse_source(input: KconfigInput) -> IResult<KconfigInput, Source> {
     )))
     .parse(input)?;
 
+    // Expand Make-style variables embedded in the source path itself
+    // (e.g. `source "arch/$(SRCARCH)/Kconfig"`). Without this, the literal
+    // `$(SRCARCH)` would leak into the resolved path and fail to read.
+    let file = input.extra.substitute_vars(file);
+    let file = file.as_str();
+
     #[cfg(feature = "glob-wildcard")]
     {
         let expanded_files = expand_source_files(input.clone(), file, JoinPathMode::Root)?;

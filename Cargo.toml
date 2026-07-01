@@ -50,6 +50,10 @@ default = ["display", "hash", "serialize", "deserialize", "kconfiglib"]
 glob-wildcard = ["dep:glob", "named-choice"]
 kconfiglib = ["glob-wildcard", "named-choice"]
 named-choice = []
+# Recover from malformed top-level entries by skipping unparseable lines instead
+# of aborting the whole file. Needed to parse genuinely broken historical kernel
+# Kconfig files (see `parse_entries_permissive`).
+permissive = []
 display = []
 debug = ["dep:tracing"]
 hash = []
